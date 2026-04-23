@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ultimate Sandbox FIX</title>
+    <style>
+        :root { --bg: #0a0a0c; --panel: #16161d; --accent: #00ffcc; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+        
+        body { 
+            margin: 0; background: var(--bg); color: #fff; font-family: sans-serif; 
+            overflow: hidden; height: 100dvh; display: flex; flex-direction: column; 
+        }
+
+        /* Оболочка для игры */
+        #game-wrapper {
+            position: relative;
+            flex-grow: 1;
+            width: 100%;
+            background: #000;
+            overflow: hidden;
+        }
+
+        canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
+
+        /* Изолированная панель управления */
+        #ui-layer {
+            background: var(--panel);
+            border-top: 3px solid #333;
+            padding: 10px 10px 25px 10px; /* Увеличен нижний отступ для Android-панели */
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 9999;
+            position: relative;
+        }
+
+        .scroll-row {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            padding: 2px 0;
+        }
+        .scroll-row::-webkit-scrollbar { display: none; }
+
+        button { 
+            padding: 14px 20px; 
+            border-radius: 10px; 
+            border: 2px solid #444; 
+            background: #25252f; 
+            color: #fff; 
+            font-size: 14px; 
+            font-weight: bold;
+            white-space: nowrap;
+            flex-shrink: 0;
+            pointer-events: auto; /* Явно разрешаем клики */
+        }
+
+        button:active, button.active { 
+            background: var(--accent); 
+            color: #000; 
+            border-color: #fff; 
+        }
+
+        .top-info {
+            position: absolute; top: 10px; left: 10px; 
+            background: rgba(0,0,0,0.7); padding: 5px 10px;
+            border-radius: 5px; font-size: 12px; pointer-events: none;
+            border: 1px solid #333;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div class="top-info" id="stats">Загрузка...</div>
+    <canvas id="canvas"></canvas>
+</div>
+
+<div id="ui-layer">
+    <div class="scroll-row" id="cats">
+        <button data-cat="geo" class="cat-btn active">ГЕО</button>
+        <button data-cat="bio" class="cat-btn">БИО</button>
+        <button data-cat="ele" class="cat-btn">ЦЕПИ</button>
+        <button data-cat="nuke" class="cat-btn">ХАОС</button>
+    </div>
+    <div class="scroll-row" id="elms"></div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        <button onclick="grid.fill(0)" style="background: #442222;">CLEAR</button>
+        <input type="range" id="brush" min="1" max="15" value="3" style="flex-grow:1; accent-color:var(--accent);">
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+const stats = document.getElementById('stats');
+const brushInput = document.getElementById('brush');
+
+let px = 5; 
+let cols, rows, grid, elect;
+let currentType = 1;
+let drawing = false;
+let currentCat = 'geo';
+
+const TYPES = {
+    0: { n: 'ЛАСТИК', c: '#000', cat: 'geo' },
+    1: { n: 'ПЕСОК', c: '#d2b48c', cat: 'geo', g: 1, s: 1 },
+    2: { n: 'ВОДА', c: '#3498db', cat: 'geo', g: 1, l: 1 },
+    3: { n: 'СТЕНА', c: '#555', cat: 'geo' },
+    10: { n: 'ДЕРЕВО', c: '#795548', cat: 'bio', burn: 1 },
+    11: { n: 'ЖИТЕЛЬ', c: '#fff', cat: 'bio', move: 1 },
+    20: { n: 'ИСТОЧНИК', c: '#f1c40f', cat: 'ele', src: 1 },
+    21: { n: 'ПРОВОД', c: '#444', cat: 'ele', cond: 1 },
+    30: { n: 'ОГОНЬ', c: '#e67e22', cat: 'nuke', fire: 1 },
+    31: { n: 'ТНТ', c: '#ff4757', cat: 'nuke', boom: 1, g: 1 }
+};
+
+function init() {
+    const wrapper = document.getElementById('game-wrapper');
+    canvas.width = wrapper.clientWidth;
+    canvas.height = wrapper.clientHeight;
+    cols = Math.floor(canvas.width / px);
+    rows = Math.floor(canvas.height / px);
+    grid = new Int8Array(cols * rows);
+    elect = new Int8Array(cols * rows);
+    renderButtons('geo');
+}
+
+// УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК КНОПОК
+function renderButtons(cat) {
+    const container = document.getElementById('elms');
+    container.innerHTML = '';
+    
+    Object.keys(TYPES).forEach(id => {
+        if (TYPES[id].cat === cat) {
+            const btn = document.createElement('button');
+            btn.innerText = TYPES[id].n;
+            if (parseInt(id) === currentType) btn.classList.add('active');
+            
+            // Важно: слушаем и click и touchstart
+            const handler = (e) => {
+                e.preventDefault();
+                e.stopPropagation(); // Не даем сигналу уйти в игру
+                currentType = parseInt(id);
+                document.querySelectorAll('#elms button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                stats.innerText = "Выбрано: " + TYPES[id].n;
+            };
+
+            btn.addEventListener('touchstart', handler, {passive: false});
+            btn.addEventListener('mousedown', handler);
+            container.appendChild(btn);
+        }
+    });
+}
+
+// ОБРАБОТКА КАТЕГОРИЙ
+document.querySelectorAll('.cat-btn').forEach(btn => {
+    const handler = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderButtons(btn.dataset.cat);
+    };
+    btn.addEventListener('touchstart', handler, {passive: false});
+    btn.addEventListener('mousedown', handler);
+});
+
+function update() {
+    let next = new Int8Array(grid);
+    let nextE = new Int8Array(grid.length);
+    for (let i = 0; i < grid.length; i++) {
+        let t = grid[i]; if (t === 0) continue;
+        let x = i % cols, y = Math.floor(i / cols), b = i + cols;
+        
+        if (TYPES[t].src) nextE[i] = 10;
+        if (elect[i] > 0) {
+            [i-1, i+1, i-cols, i+cols].forEach(n => {
+                if (n >= 0 && n < grid.length && TYPES[grid[n]]?.cond && elect[n] === 0) nextE[n] = elect[i]-1;
+            });
+        }
+        if (TYPES[t].g && y < rows-1) {
+            if (grid[b] === 0) { next[i]=0; next[b]=t; }
+            else if (TYPES[t].s && x+(Math.random()>0.5?1:-1) >= 0 && grid[b+(Math.random()>0.5?1:-1)]===0) {
+                next[i]=0; next[b+(Math.random()>0.5?1:-1)]=t;
+            }
+        }
+        if (t === 30) { // Огонь
+            [i-1, i+1, i-cols, i+cols].forEach(n => { if (TYPES[grid[n]]?.burn) next[n]=30; });
+            if (Math.random()>0.2) next[i]=0;
+        }
+    }
+    grid = next; elect = nextE;
+}
+
+function draw() {
+    ctx.fillStyle = '#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    for (let i=0; i<grid.length; i++) {
+        if (grid[i]!==0) {
+            ctx.fillStyle = (elect[i]>0 && TYPES[grid[i]].cond) ? '#00ffff' : TYPES[grid[i]].c;
+            ctx.fillRect((i%cols)*px, Math.floor(i/cols)*px, px, px);
+        }
+    }
+}
+
+const getPos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: Math.floor((t.clientX - r.left)/px), y: Math.floor((t.clientY - r.top)/px) };
+};
+
+const doPaint = (e) => {
+    if (!drawing) return;
+    const {x, y} = getPos(e);
+    const b = parseInt(brushInput.value);
+    for(let i=-b; i<=b; i++) {
+        for(let j=-b; j<=b; j++) {
+            if (x+i>=0 && x+i<cols && y+j>=0 && y+j<rows) grid[(y+j)*cols+(x+i)] = currentType;
+        }
+    }
+};
+
+canvas.addEventListener('touchstart', (e) => { drawing=true; doPaint(e); e.preventDefault(); }, {passive:false});
+canvas.addEventListener('touchmove', (e) => { doPaint(e); e.preventDefault(); }, {passive:false});
+window.addEventListener('touchend', () => drawing=false);
+canvas.addEventListener('mousedown', (e) => { drawing=true; doPaint(e); });
+window.addEventListener('mouseup', () => drawing=false);
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+init(); loop();
+</script>
+</body>
+</html>
